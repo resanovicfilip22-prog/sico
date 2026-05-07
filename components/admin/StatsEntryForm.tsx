@@ -113,13 +113,13 @@ export default function StatsEntryForm({ match, homeRoster, awayRoster, existing
     router.refresh()
   }
 
-  const StatInput = ({ value, onChange, wide }: { value: string; onChange: (v: string) => void; wide?: boolean }) => (
+  const StatInput = ({ value, onChange, wide, error }: { value: string; onChange: (v: string) => void; wide?: boolean; error?: boolean }) => (
     <Input
       type="number"
       min="0"
       value={value}
       onChange={e => onChange(e.target.value)}
-      className={`h-7 text-center px-1 ${wide ? 'w-14' : 'w-11'}`}
+      className={`h-7 text-center px-1 ${wide ? 'w-14' : 'w-11'} ${error ? 'border-destructive focus-visible:ring-destructive' : ''}`}
     />
   )
 
@@ -155,32 +155,39 @@ export default function StatsEntryForm({ match, homeRoster, awayRoster, existing
               const pts = calcPoints(row)
               const val = calcVal(row)
               const f = (field: keyof StatRow) => (v: string) => update(isHome, r.player_id, field, v)
+              const twoErr = +row.two_pt_made > +row.two_pt_attempted
+              const threeErr = +row.three_pt_made > +row.three_pt_attempted
+              const ftErr = +row.ft_made > +row.ft_attempted
+              const rowHasError = twoErr || threeErr || ftErr
               return (
-                <TableRow key={r.player_id}>
+                <TableRow key={r.player_id} className={rowHasError ? 'bg-destructive/5' : ''}>
                   <TableCell className="sticky left-0 bg-background font-medium whitespace-nowrap">
-                    {r.player?.last_name} {r.player?.first_name}
+                    <span className={rowHasError ? 'text-destructive' : ''}>
+                      {rowHasError && <span className="mr-1" title="Pogoci > pokušaji">⚠</span>}
+                      {r.player?.last_name} {r.player?.first_name}
+                    </span>
                     {r.jersey_number ? <span className="text-muted-foreground ml-1 text-xs">#{r.jersey_number}</span> : null}
                   </TableCell>
                   <TableCell><StatInput value={row.minutes} onChange={f('minutes')} /></TableCell>
                   <TableCell>
                     <div className="flex gap-0.5">
-                      <StatInput value={row.two_pt_made} onChange={f('two_pt_made')} />
+                      <StatInput value={row.two_pt_made} onChange={f('two_pt_made')} error={twoErr} />
                       <span className="self-center text-muted-foreground">/</span>
-                      <StatInput value={row.two_pt_attempted} onChange={f('two_pt_attempted')} />
+                      <StatInput value={row.two_pt_attempted} onChange={f('two_pt_attempted')} error={twoErr} />
                     </div>
                   </TableCell>
                   <TableCell>
                     <div className="flex gap-0.5">
-                      <StatInput value={row.three_pt_made} onChange={f('three_pt_made')} />
+                      <StatInput value={row.three_pt_made} onChange={f('three_pt_made')} error={threeErr} />
                       <span className="self-center text-muted-foreground">/</span>
-                      <StatInput value={row.three_pt_attempted} onChange={f('three_pt_attempted')} />
+                      <StatInput value={row.three_pt_attempted} onChange={f('three_pt_attempted')} error={threeErr} />
                     </div>
                   </TableCell>
                   <TableCell>
                     <div className="flex gap-0.5">
-                      <StatInput value={row.ft_made} onChange={f('ft_made')} />
+                      <StatInput value={row.ft_made} onChange={f('ft_made')} error={ftErr} />
                       <span className="self-center text-muted-foreground">/</span>
-                      <StatInput value={row.ft_attempted} onChange={f('ft_attempted')} />
+                      <StatInput value={row.ft_attempted} onChange={f('ft_attempted')} error={ftErr} />
                     </div>
                   </TableCell>
                   <TableCell><StatInput value={row.off_rebounds} onChange={f('off_rebounds')} /></TableCell>
@@ -216,6 +223,13 @@ export default function StatsEntryForm({ match, homeRoster, awayRoster, existing
   const homeOk = !hasScore || homeTotalPts === match.home_score
   const awayOk = !hasScore || awayTotalPts === match.away_score
   const mismatch = hasScore && (!homeOk || !awayOk)
+
+  const allRows = [...Object.values(homeRows), ...Object.values(awayRows)]
+  const invalidCount = allRows.filter(r =>
+    +r.two_pt_made > +r.two_pt_attempted ||
+    +r.three_pt_made > +r.three_pt_attempted ||
+    +r.ft_made > +r.ft_attempted
+  ).length
 
   return (
     <div className="space-y-4">
@@ -257,12 +271,17 @@ export default function StatsEntryForm({ match, homeRoster, awayRoster, existing
         </div>
       )}
 
-      <div className="flex items-center gap-3 pt-2 border-t">
+      <div className="flex items-center gap-3 pt-2 border-t flex-wrap">
         <Button onClick={handleSave} disabled={loading} size="lg">
           {saved ? 'Statistika spremljena!' : loading ? 'Sprema...' : 'Spremi statistiku'}
         </Button>
         {saved && <Badge variant="secondary">Sve statistike su ažurirane</Badge>}
-        {!mismatch && <span className="text-xs text-muted-foreground">Koš i VAL se računaju automatski</span>}
+        {invalidCount > 0 && (
+          <span className="text-sm text-destructive font-medium">
+            ⚠ {invalidCount} {invalidCount === 1 ? 'igrač ima' : 'igrača ima'} pogoke &gt; pokušaje — provjeri označene retke
+          </span>
+        )}
+        {invalidCount === 0 && !mismatch && <span className="text-xs text-muted-foreground">Koš i VAL se računaju automatski</span>}
       </div>
     </div>
   )

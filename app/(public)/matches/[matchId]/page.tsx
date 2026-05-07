@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { PlayerMatchStatsComputed } from '@/lib/supabase/types'
+import LiveMatchScore from '@/components/public/LiveMatchScore'
 
 export default async function MatchPage({ params }: { params: Promise<{ matchId: string }> }) {
   const { matchId } = await params
@@ -154,19 +155,7 @@ export default async function MatchPage({ params }: { params: Promise<{ matchId:
             </span>
           )}
         </p>
-        <div className="flex items-center gap-4 flex-wrap">
-          <Link href={`/teams/${match.home_team_id}`} className="text-2xl font-bold hover:underline">
-            {match.home_team?.name}
-          </Link>
-          {match.status === 'finished' ? (
-            <span className="text-4xl font-bold tabular-nums">{match.home_score} – {match.away_score}</span>
-          ) : (
-            <Badge variant="outline" className="text-lg px-3 py-1">Zakazano</Badge>
-          )}
-          <Link href={`/teams/${match.away_team_id}`} className="text-2xl font-bold hover:underline">
-            {match.away_team?.name}
-          </Link>
-        </div>
+        <LiveMatchScore initialMatch={match} />
       </div>
 
       {statsMatchScore ? (
