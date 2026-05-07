@@ -130,19 +130,19 @@ RLS: javni SELECT na svemu, authenticated ALL.
 - [x] Upravljanje kolima (CRUD, redoslijed)
 - [x] Upravljanje utakmicama (CRUD, brisanje, sprječavanje iste ekipe u istom kolu)
 - [x] Unos statistike po utakmici (sve kolone, live izračun bodova i VAL)
+- [x] **Validacija forme** — crvena bordura + highlight retka kad pogoci > pokušaji, globalni brojač grešaka
 - [x] Upozorenje kad statistike ne odgovaraju rezultatu (vidljivo adminu, skriveno javnosti)
 - [x] **Live score unos** — `/admin/matches/[id]/live`, Supabase Realtime, +1/+2/+3/−1 tipke, "Završi"
 - [x] **Playoff bracket vizualizacija** — SVG connectori, apsolutno pozicioniranje, green highlight pobjednika
 - [x] Playoff generiranje (automatski iz ljestvice, upravljanje pobjednicima)
 - [x] Roster po ekipi po sezoni (AdminTeamRoster)
 
+### Javni dio
+- [x] **Live score na javnoj stranici** — `LiveMatchScore` client komponenta, Supabase Realtime, animirani LIVE badge, auto-refresh box scorea kad utakmica završi
+
 ---
 
 ## Što treba implementirati / poboljšati ❌
-
-### Visoki prioritet
-- [ ] **Validacija forme za unos statistike** — minimumi (minuti > 0), provjera konzistentnosti (pokušaji ≥ pogoci)
-- [ ] **Live score na javnoj stranici** — `/matches/[id]` prikazuje score u realnom vremenu dok je utakmica u tijeku
 
 ### Srednji prioritet
 - [ ] **Foto upload za igrače** — Supabase Storage bucket (besplatan 1GB)
@@ -194,10 +194,43 @@ Otvori `http://localhost:3000` (javni dio) i `http://localhost:3000/admin` (admi
 
 ### 5. Deploy na Vercel
 
-1. Gurni kod na GitHub
-2. Na [vercel.com](https://vercel.com) → "New Project" → uvezi GitHub repo
-3. U Environment Variables dodaj `NEXT_PUBLIC_SUPABASE_URL` i `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-4. Deploy → gotovo, besplatno zauvijek (Hobby tier)
+#### Korak 1 — GitHub
+Repo mora biti na GitHubu (već je: `resanovicfilip22-prog/sico`).
+
+#### Korak 2 — Vercel projekt
+1. Idi na [vercel.com](https://vercel.com) i prijavi se (GitHub login preporučen)
+2. Klikni **"Add New… → Project"**
+3. Pronađi `sico` repo i klikni **"Import"**
+4. Framework preset: **Next.js** (automatski se detektira)
+5. Root Directory: ostavi prazno (`.`)
+6. Build & Output Settings: ostavi defaultno
+
+#### Korak 3 — Environment Variables
+U sekciji "Environment Variables" dodaj **obje** varijable:
+
+| Name | Value |
+|------|-------|
+| `NEXT_PUBLIC_SUPABASE_URL` | `https://xxxx.supabase.co` (iz Supabase → Settings → API) |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | `eyJ...` (anon public key iz istog mjesta) |
+
+Obje varijable označi za: ✓ Production, ✓ Preview, ✓ Development
+
+#### Korak 4 — Deploy
+Klikni **"Deploy"**. Prvi deploy traje ~2 minute. Dobiješ URL oblika `sico-xxx.vercel.app`.
+
+#### Korak 5 — Custom domena (opcionalno)
+Vercel → projekt → **Domains** → dodaj svoju domenu i podesi DNS.
+
+#### Korak 6 — UptimeRobot (obavezno za Supabase free tier!)
+Supabase pauzira projekte nakon **7 dana bez prometa**. Sprječava se pinganjem:
+1. Idi na [uptimerobot.com](https://uptimerobot.com) → besplatni račun
+2. **"Add New Monitor"** → HTTP(s)
+3. URL: tvoj Vercel URL (npr. `https://sico-xxx.vercel.app`)
+4. Monitoring Interval: **5 minutes**
+5. Spremi → projekt nikad neće biti pauziran
+
+#### Budući deploji
+Svaki `git push` na `master` automatski triggera novi deploy na Vercelu. Nema ručnih koraka.
 
 ---
 
