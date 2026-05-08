@@ -29,15 +29,15 @@ const DEFAULT: LiveStat = {
   assists: 0, turnovers: 0, steals: 0, blocks: 0, fouls: 0,
 }
 
-const ACTIONS: { label: string; deltas: Partial<LiveStat>; variant?: 'success' | 'miss' | 'neutral' }[] = [
+const ACTIONS: { label: string; deltas: Partial<LiveStat>; variant: 'success' | 'miss' | 'neutral' }[] = [
   { label: '2P ✓', deltas: { two_pt_made: 1, two_pt_attempted: 1 }, variant: 'success' },
   { label: '2P ✗', deltas: { two_pt_attempted: 1 }, variant: 'miss' },
   { label: '3P ✓', deltas: { three_pt_made: 1, three_pt_attempted: 1 }, variant: 'success' },
   { label: '3P ✗', deltas: { three_pt_attempted: 1 }, variant: 'miss' },
   { label: 'SB ✓', deltas: { ft_made: 1, ft_attempted: 1 }, variant: 'success' },
   { label: 'SB ✗', deltas: { ft_attempted: 1 }, variant: 'miss' },
-  { label: 'SK+', deltas: { off_rebounds: 1 }, variant: 'neutral' },
-  { label: 'SK-', deltas: { def_rebounds: 1 }, variant: 'neutral' },
+  { label: 'SK N.', deltas: { off_rebounds: 1 }, variant: 'neutral' },
+  { label: 'SK O.', deltas: { def_rebounds: 1 }, variant: 'neutral' },
   { label: 'As', deltas: { assists: 1 }, variant: 'neutral' },
   { label: 'Izg', deltas: { turnovers: 1 }, variant: 'neutral' },
   { label: 'Ukr', deltas: { steals: 1 }, variant: 'neutral' },
@@ -46,6 +46,20 @@ const ACTIONS: { label: string; deltas: Partial<LiveStat>; variant?: 'success' |
 ]
 
 function calcPts(s: LiveStat) { return s.two_pt_made * 2 + s.three_pt_made * 3 + s.ft_made }
+function pointsDelta(deltas: Partial<LiveStat>) {
+  return (deltas.two_pt_made ?? 0) * 2 + (deltas.three_pt_made ?? 0) * 3 + (deltas.ft_made ?? 0)
+}
+
+interface HistoryEntry {
+  playerId: string
+  teamId: string
+  prevStats: LiveStat
+  newStats: LiveStat
+  prevScore: number
+  scorePointsDelta: number
+  scoreField: 'home_score' | 'away_score'
+  label: string
+}
 
 export default function LiveScoreBoard({ initialMatch, homeRoster, awayRoster }: Props) {
   const [match, setMatch] = useState(initialMatch)
@@ -53,8 +67,11 @@ export default function LiveScoreBoard({ initialMatch, homeRoster, awayRoster }:
   const [stats, setStats] = useState<Record<string, LiveStat>>({})
   const [selected, setSelected] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'home' | 'away'>('home')
+  const [history, setHistory] = useState<HistoryEntry[]>([])
   const router = useRouter()
   const supabase = createClient()
+
+  const hasRosters = homeRoster.length > 0 || awayRoster.length > 0
 
   useEffect(() => {
     const channel = supabase
@@ -74,6 +91,7 @@ export default function LiveScoreBoard({ initialMatch, homeRoster, awayRoster }:
     })
   }, [match.id])
 
+  // Manual score adjustment (only used when no rosters)
   const addPoints = async (team: 'home' | 'away', delta: number) => {
     const field = team === 'home' ? 'home_score' : 'away_score'
     const current = (team === 'home' ? match.home_score : match.away_score) ?? 0
@@ -84,16 +102,53 @@ export default function LiveScoreBoard({ initialMatch, homeRoster, awayRoster }:
     setSaving(false)
   }
 
-  const doStat = async (playerId: string, teamId: string, deltas: Partial<LiveStat>) => {
-    const current = stats[playerId] ?? DEFAULT
-    const updated = { ...current }
-    for (const [k, v] of Object.entries(deltas)) updated[k as StatKey] = updated[k as StatKey] + (v ?? 0)
-    setStats(prev => ({ ...prev, [playerId]: updated }))
+  const doStat = async (playerId: string, teamId: string, deltas: Partial<LiveStat>, label: string) => {
+    const prevStats = stats[playerId] ?? DEFAULT
+    const newStats = { ...prevStats }
+    for (const [k, v] of Object.entries(deltas)) newStats[k as StatKey] = newStats[k as StatKey] + (v ?? 0)
 
-    await supabase.from('player_match_stats').upsert({
-      match_id: match.id, player_id: playerId, team_id: teamId,
-      minutes: 0, plus_minus: 0, ...updated,
-    }, { onConflict: 'match_id,player_id' })
+    const pts = pointsDelta(deltas)
+    const scoreField = teamId === match.home_team_id ? 'home_score' : 'away_score'
+    const prevScore = (scoreField === 'home_score' ? match.home_score : match.away_score) ?? 0
+    const newScore = Math.max(0, prevScore + pts)
+
+    // Optimistic update
+    setStats(prev => ({ ...prev, [playerId]: newStats }))
+    if (pts !== 0) setMatch(prev => ({ ...prev, [scoreField]: newScore }))
+
+    // Push to history (keep last 20)
+    setHistory(prev => [...prev.slice(-19), { playerId, teamId, prevStats, newStats, prevScore, scorePointsDelta: pts, scoreField, label }])
+
+    setSaving(true)
+    const ops = [
+      supabase.from('player_match_stats').upsert({
+        match_id: match.id, player_id: playerId, team_id: teamId,
+        minutes: 0, plus_minus: 0, ...newStats,
+      }, { onConflict: 'match_id,player_id' }),
+      ...(pts !== 0 ? [supabase.from('matches').update({ [scoreField]: newScore }).eq('id', match.id)] : []),
+    ]
+    await Promise.all(ops)
+    setSaving(false)
+  }
+
+  const undo = async () => {
+    const last = history[history.length - 1]
+    if (!last) return
+
+    setHistory(prev => prev.slice(0, -1))
+    setStats(prev => ({ ...prev, [last.playerId]: last.prevStats }))
+    if (last.scorePointsDelta !== 0) setMatch(prev => ({ ...prev, [last.scoreField]: last.prevScore }))
+
+    setSaving(true)
+    const ops = [
+      supabase.from('player_match_stats').upsert({
+        match_id: match.id, player_id: last.playerId, team_id: last.teamId,
+        minutes: 0, plus_minus: 0, ...last.prevStats,
+      }, { onConflict: 'match_id,player_id' }),
+      ...(last.scorePointsDelta !== 0 ? [supabase.from('matches').update({ [last.scoreField]: last.prevScore }).eq('id', match.id)] : []),
+    ]
+    await Promise.all(ops)
+    setSaving(false)
   }
 
   const finish = async () => {
@@ -109,6 +164,7 @@ export default function LiveScoreBoard({ initialMatch, homeRoster, awayRoster }:
   const isFinished = match.status === 'finished'
   const roster = activeTab === 'home' ? homeRoster : awayRoster
   const teamId = activeTab === 'home' ? match.home_team_id : match.away_team_id
+  const lastAction = history[history.length - 1]
 
   return (
     <div className="space-y-8">
@@ -128,7 +184,7 @@ export default function LiveScoreBoard({ initialMatch, homeRoster, awayRoster }:
         <div className="text-center space-y-4">
           <p className="text-lg font-bold leading-tight">{match.home_team?.name}</p>
           <p className="text-8xl font-bold tabular-nums">{homeScore}</p>
-          {!isFinished && (
+          {!isFinished && !hasRosters && (
             <div className="flex justify-center flex-wrap gap-2">
               {[1, 2, 3].map(pts => (
                 <Button key={pts} variant="outline" onClick={() => addPoints('home', pts)} disabled={saving} className="w-12">+{pts}</Button>
@@ -141,7 +197,7 @@ export default function LiveScoreBoard({ initialMatch, homeRoster, awayRoster }:
         <div className="text-center space-y-4">
           <p className="text-lg font-bold leading-tight">{match.away_team?.name}</p>
           <p className="text-8xl font-bold tabular-nums">{awayScore}</p>
-          {!isFinished && (
+          {!isFinished && !hasRosters && (
             <div className="flex justify-center flex-wrap gap-2">
               {[1, 2, 3].map(pts => (
                 <Button key={pts} variant="outline" onClick={() => addPoints('away', pts)} disabled={saving} className="w-12">+{pts}</Button>
@@ -153,9 +209,9 @@ export default function LiveScoreBoard({ initialMatch, homeRoster, awayRoster }:
       </div>
 
       {/* Player stat entry */}
-      {(homeRoster.length > 0 || awayRoster.length > 0) && !isFinished && (
+      {hasRosters && !isFinished && (
         <div className="border rounded-lg overflow-hidden">
-          {/* Team tabs */}
+          {/* Team tabs + undo */}
           <div className="flex border-b">
             {(['home', 'away'] as const).map(tab => {
               const r = tab === 'home' ? homeRoster : awayRoster
@@ -172,6 +228,17 @@ export default function LiveScoreBoard({ initialMatch, homeRoster, awayRoster }:
                 </button>
               )
             })}
+            {lastAction && (
+              <button
+                type="button"
+                className="px-3 py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors border-l shrink-0"
+                onClick={undo}
+                disabled={saving}
+                title={`Poništi: ${lastAction.label}`}
+              >
+                ↩ {lastAction.label}
+              </button>
+            )}
           </div>
 
           {/* Player list */}
@@ -201,7 +268,7 @@ export default function LiveScoreBoard({ initialMatch, homeRoster, awayRoster }:
                   </button>
 
                   {isSelected && (
-                    <div className="px-4 pb-3 pt-1 bg-muted/20">
+                    <div className="px-4 pb-3 pt-2 bg-muted/20">
                       <div className="flex flex-wrap gap-1.5">
                         {ACTIONS.map(action => (
                           <Button
@@ -209,7 +276,10 @@ export default function LiveScoreBoard({ initialMatch, homeRoster, awayRoster }:
                             size="sm"
                             variant={action.variant === 'success' ? 'default' : action.variant === 'miss' ? 'outline' : 'secondary'}
                             className={`h-8 text-xs ${action.variant === 'miss' ? 'text-muted-foreground' : ''}`}
-                            onClick={() => doStat(r.player_id, teamId, action.deltas)}
+                            onClick={() => doStat(
+                              r.player_id, teamId, action.deltas,
+                              `${r.player?.last_name} ${action.label}`
+                            )}
                             disabled={saving}
                           >
                             {action.label}
@@ -217,7 +287,7 @@ export default function LiveScoreBoard({ initialMatch, homeRoster, awayRoster }:
                         ))}
                       </div>
                       <div className="mt-2 text-xs text-muted-foreground">
-                        2P: {s.two_pt_made}/{s.two_pt_attempted} · 3P: {s.three_pt_made}/{s.three_pt_attempted} · SB: {s.ft_made}/{s.ft_attempted} · Sk: {reb} · As: {s.assists} · Izg: {s.turnovers} · Gr: {s.fouls}
+                        2P: {s.two_pt_made}/{s.two_pt_attempted} · 3P: {s.three_pt_made}/{s.three_pt_attempted} · SB: {s.ft_made}/{s.ft_attempted} · SK N.: {s.off_rebounds} · SK O.: {s.def_rebounds} · As: {s.assists} · Izg: {s.turnovers} · Gr: {s.fouls}
                       </div>
                     </div>
                   )}
