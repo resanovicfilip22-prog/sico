@@ -59,39 +59,58 @@ export default function RoundsManager({ rounds, seasons, defaultSeasonTeams, def
     if (!confirm(msg)) return
 
     setLoading(true)
+    try {
+      // Delete existing regular rounds for this season
+      const { data: existing, error: fetchErr } = await supabase
+        .from('rounds').select('id').eq('season_id', seasonId).eq('is_playoff', false)
+      if (fetchErr) throw new Error('Greška dohvata kola: ' + fetchErr.message)
 
-    // Delete existing regular rounds (cascades to matches)
-    const { data: existing } = await supabase.from('rounds').select('id').eq('season_id', seasonId).eq('is_playoff', false)
-    if (existing && existing.length > 0) {
-      const ids = existing.map(r => r.id)
-      await supabase.from('matches').delete().in('round_id', ids)
-      await supabase.from('rounds').delete().in('id', ids)
-    }
+      if (existing && existing.length > 0) {
+        const ids = existing.map(r => r.id)
+        const { error: delMatchErr } = await supabase.from('matches').delete().in('round_id', ids)
+        if (delMatchErr) throw new Error('Greška brisanja utakmica: ' + delMatchErr.message)
+        const { error: delRoundErr } = await supabase.from('rounds').delete().in('id', ids)
+        if (delRoundErr) throw new Error('Greška brisanja kola: ' + delRoundErr.message)
+      }
 
-    // Create rounds
-    const { data: newRounds } = await supabase.from('rounds').insert(
-      Array.from({ length: totalRounds }, (_, i) => ({
-        season_id: seasonId, name: `${i + 1}. kolo`, round_number: i + 1, is_playoff: false,
-      }))
-    ).select()
-
-    if (newRounds && newRounds.length > 0) {
-      // Create empty match slots per round (teams filled in later)
-      const matchInserts = newRounds.flatMap(round =>
-        Array.from({ length: matchesPerRound }, () => ({
-          season_id: seasonId, round_id: round.id,
-          home_team_id: null, away_team_id: null,
-          status: 'scheduled' as const, is_playoff: false,
+      // Create rounds
+      const { data: newRounds, error: roundErr } = await supabase.from('rounds').insert(
+        Array.from({ length: totalRounds }, (_, i) => ({
+          season_id: seasonId, name: `${i + 1}. kolo`, round_number: i + 1, is_playoff: false,
         }))
-      )
-      const { data: newMatchesData } = await supabase.from('matches').insert(matchInserts).select()
-      setCurrentRounds(newRounds.sort((a, b) => a.round_number - b.round_number))
-      setCurrentMatches((newMatchesData ?? []) as Match[])
-      setForm({ name: '', round_number: newRounds.length + 1 })
-    }
+      ).select()
+      if (roundErr) throw new Error('Greška kreiranja kola: ' + roundErr.message)
+      if (!newRounds || newRounds.length === 0) throw new Error('Kola nisu kreirana — provjeri Supabase projekt.')
 
-    setLoading(false)
-    router.refresh()
+      const sorted = newRounds.sort((a, b) => a.round_number - b.round_number)
+      setCurrentRounds(sorted)
+      setForm({ name: '', round_number: newRounds.length + 1 })
+
+      // Create empty match slots per round
+      if (matchesPerRound > 0) {
+        const matchInserts = sorted.flatMap(round =>
+          Array.from({ length: matchesPerRound }, () => ({
+            season_id: seasonId, round_id: round.id,
+            home_team_id: null as null, away_team_id: null as null,
+            status: 'scheduled' as const, is_playoff: false,
+          }))
+        )
+        const { data: newMatchesData, error: matchErr } = await supabase
+          .from('matches').insert(matchInserts).select()
+        if (matchErr) throw new Error(
+          'Kola su kreirana, ali utakmice nisu.\n\nUzrok: ' + matchErr.message +
+          '\n\nRješenje: pokreni ovu SQL naredbu u Supabase → SQL Editor:\n\n' +
+          'ALTER TABLE matches ALTER COLUMN home_team_id DROP NOT NULL;\n' +
+          'ALTER TABLE matches ALTER COLUMN away_team_id DROP NOT NULL;'
+        )
+        setCurrentMatches((newMatchesData ?? []) as Match[])
+      }
+    } catch (err) {
+      alert(String(err))
+    } finally {
+      setLoading(false)
+      router.refresh()
+    }
   }
 
   const handleTeamChange = async (matchId: string, field: 'home' | 'away', teamId: string) => {
