@@ -71,17 +71,17 @@ export default function MatchesManager({ matches, rounds, seasonTeams, seasons, 
   }
 
   const regularRounds = rounds.filter(r => !r.is_playoff && r.season_id === seasonId)
-  const seasonMatches2 = matches.filter(m => m.season_id === seasonId && !m.is_playoff)
+  // Only count assigned matches (null-team slots are managed in Kola page)
+  const seasonMatches = matches.filter(m => m.season_id === seasonId && !m.is_playoff && m.home_team_id && m.away_team_id)
   const pairCount = (form.home_team_id && form.away_team_id)
-    ? seasonMatches2.filter(m =>
+    ? seasonMatches.filter(m =>
         (m.home_team_id === form.home_team_id && m.away_team_id === form.away_team_id) ||
         (m.home_team_id === form.away_team_id && m.away_team_id === form.home_team_id)
       ).length
     : 0
-  const seasonMatches = matches.filter(m => m.season_id === seasonId && !m.is_playoff)
 
   const teamsInSelectedRound = form.round_id
-    ? new Set(seasonMatches.filter(m => m.round_id === form.round_id).flatMap(m => [m.home_team_id, m.away_team_id]))
+    ? new Set(seasonMatches.filter(m => m.round_id === form.round_id).flatMap(m => [m.home_team_id as string, m.away_team_id as string]))
     : new Set<string>()
 
   const availableForHome = seasonTeams.filter(st => !teamsInSelectedRound.has(st.team_id) && st.team_id !== form.away_team_id)

@@ -112,6 +112,7 @@ export async function computeStandings(supabase: SupabaseClient, seasonId: strin
 
   for (const m of matches) {
     if (m.home_score == null || m.away_score == null) continue
+    if (!m.home_team || !m.away_team) continue
     const home = ensure(m.home_team)
     const away = ensure(m.away_team)
 

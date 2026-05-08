@@ -69,8 +69,8 @@ export default function StatsEntryForm({ match, homeRoster, awayRoster, existing
     return rows
   }
 
-  const [homeRows, setHomeRows] = useState<Record<string, StatRow>>(() => initRows(homeRoster, match.home_team_id))
-  const [awayRows, setAwayRows] = useState<Record<string, StatRow>>(() => initRows(awayRoster, match.away_team_id))
+  const [homeRows, setHomeRows] = useState<Record<string, StatRow>>(() => initRows(homeRoster, match.home_team_id ?? ''))
+  const [awayRows, setAwayRows] = useState<Record<string, StatRow>>(() => initRows(awayRoster, match.away_team_id ?? ''))
   const [loading, setLoading] = useState(false)
   const [saved, setSaved] = useState(false)
   const router = useRouter()
@@ -245,10 +245,10 @@ export default function StatsEntryForm({ match, homeRoster, awayRoster, existing
           </TabsTrigger>
         </TabsList>
         <TabsContent value="home">
-          <TeamTable roster={homeRoster} rows={homeRows} teamId={match.home_team_id} isHome={true} />
+          <TeamTable roster={homeRoster} rows={homeRows} teamId={match.home_team_id ?? ''} isHome={true} />
         </TabsContent>
         <TabsContent value="away">
-          <TeamTable roster={awayRoster} rows={awayRows} teamId={match.away_team_id} isHome={false} />
+          <TeamTable roster={awayRoster} rows={awayRows} teamId={match.away_team_id ?? ''} isHome={false} />
         </TabsContent>
       </Tabs>
 

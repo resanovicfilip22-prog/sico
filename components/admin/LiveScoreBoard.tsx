@@ -163,7 +163,7 @@ export default function LiveScoreBoard({ initialMatch, homeRoster, awayRoster }:
   const awayScore = match.away_score ?? 0
   const isFinished = match.status === 'finished'
   const roster = activeTab === 'home' ? homeRoster : awayRoster
-  const teamId = activeTab === 'home' ? match.home_team_id : match.away_team_id
+  const teamId = (activeTab === 'home' ? match.home_team_id : match.away_team_id) ?? ''
   const lastAction = history[history.length - 1]
 
   return (

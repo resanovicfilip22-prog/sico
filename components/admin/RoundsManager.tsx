@@ -18,34 +18,15 @@ interface Props {
   defaultSeasonId: string
 }
 
-function generateDoubleRoundRobin(teamIds: string[]): { home: string; away: string }[][] {
-  const teams = [...teamIds]
-  if (teams.length % 2 === 1) teams.push('bye')
-  const n = teams.length
-  const fixed = teams[0]
-  const rotating = teams.slice(1)
-  const firstHalf: { home: string; away: string }[][] = []
-
-  for (let r = 0; r < n - 1; r++) {
-    const round: { home: string; away: string }[] = []
-    if (fixed !== 'bye' && rotating[0] !== 'bye') round.push({ home: fixed, away: rotating[0] })
-    for (let i = 1; i < n / 2; i++) {
-      const t1 = rotating[i], t2 = rotating[n - 2 - i]
-      if (t1 !== 'bye' && t2 !== 'bye') round.push({ home: t1, away: t2 })
-    }
-    firstHalf.push(round)
-    rotating.unshift(rotating.pop()!)
-  }
-
-  const secondHalf = firstHalf.map(r => r.map(m => ({ home: m.away, away: m.home })))
-  return [...firstHalf, ...secondHalf]
-}
-
 export default function RoundsManager({ rounds, seasons, defaultSeasonTeams, defaultMatches, defaultSeasonId }: Props) {
   const [seasonId, setSeasonId] = useState(defaultSeasonId)
+  const [currentRounds, setCurrentRounds] = useState<Round[]>(
+    rounds.filter(r => r.season_id === defaultSeasonId && !r.is_playoff)
+      .sort((a, b) => a.round_number - b.round_number)
+  )
   const [currentTeams, setCurrentTeams] = useState(defaultSeasonTeams)
   const [currentMatches, setCurrentMatches] = useState(defaultMatches)
-  const [form, setForm] = useState({ name: '', round_number: rounds.length + 1 })
+  const [form, setForm] = useState({ name: '', round_number: defaultMatches.length > 0 ? rounds.filter(r => r.season_id === defaultSeasonId && !r.is_playoff).length + 1 : 1 })
   const [loading, setLoading] = useState(false)
   const [expanded, setExpanded] = useState<string | null>(null)
   const router = useRouter()
@@ -53,17 +34,17 @@ export default function RoundsManager({ rounds, seasons, defaultSeasonTeams, def
 
   const changeSeasonId = async (id: string) => {
     setSeasonId(id)
-    const [teamsRes, matchesRes] = await Promise.all([
+    const [teamsRes, matchesRes, roundsRes] = await Promise.all([
       supabase.from('season_teams').select('*, team:teams(*)').eq('season_id', id),
       supabase.from('matches').select('*, home_team:teams!home_team_id(*), away_team:teams!away_team_id(*)').eq('season_id', id).eq('is_playoff', false),
+      supabase.from('rounds').select('*').eq('season_id', id).eq('is_playoff', false).order('round_number'),
     ])
+    const newRounds = roundsRes.data ?? []
     setCurrentTeams((teamsRes.data ?? []) as (SeasonTeam & { team: Team })[])
     setCurrentMatches((matchesRes.data ?? []) as Match[])
+    setCurrentRounds(newRounds)
+    setForm({ name: '', round_number: newRounds.length + 1 })
   }
-
-  const seasonRounds = rounds
-    .filter(r => r.season_id === seasonId && !r.is_playoff)
-    .sort((a, b) => a.round_number - b.round_number)
 
   const n = currentTeams.length
   const totalRounds = n < 2 ? 0 : n % 2 === 0 ? 2 * (n - 1) : 2 * n
@@ -72,47 +53,104 @@ export default function RoundsManager({ rounds, seasons, defaultSeasonTeams, def
 
   const handleGenerate = async () => {
     if (n < 2) return
-    const msg = seasonRounds.length > 0
-      ? `Resetirati raspored? Sva postojeća kola i utakmice ove sezone bit će obrisani.\n\n${n} ekipa → ${totalRounds} kola`
-      : `Generirati raspored?\n\n${n} ekipa → ${totalRounds} kola, ${matchesPerRound} utakmic${matchesPerRound === 1 ? 'a' : 'e'} po kolu${hasBye ? ' (jedna ekipa slobodna)' : ''}\nSvaka ekipa igra sa svakom točno 2 puta.`
+    const msg = currentRounds.length > 0
+      ? `Resetirati raspored? Sva postojeća kola i utakmice ove sezone bit će obrisani.\n\n${n} ekipa → ${totalRounds} kola, ${matchesPerRound} utakmic${matchesPerRound === 1 ? 'a' : 'e'} po kolu`
+      : `Generirati raspored?\n\n${n} ekipa → ${totalRounds} kola, ${matchesPerRound} utakmic${matchesPerRound === 1 ? 'a' : 'e'} po kolu${hasBye ? ' (jedna ekipa slobodna po kolu)' : ''}\nSvaka ekipa igra sa svakom točno 2 puta.`
     if (!confirm(msg)) return
 
     setLoading(true)
 
-    if (seasonRounds.length > 0) {
-      const ids = seasonRounds.map(r => r.id)
+    // Delete existing regular rounds (cascades to matches)
+    const { data: existing } = await supabase.from('rounds').select('id').eq('season_id', seasonId).eq('is_playoff', false)
+    if (existing && existing.length > 0) {
+      const ids = existing.map(r => r.id)
       await supabase.from('matches').delete().in('round_id', ids)
       await supabase.from('rounds').delete().in('id', ids)
     }
 
-    const schedule = generateDoubleRoundRobin(currentTeams.map(st => st.team_id))
+    // Create rounds
     const { data: newRounds } = await supabase.from('rounds').insert(
-      schedule.map((_, i) => ({ season_id: seasonId, name: `${i + 1}. kolo`, round_number: i + 1, is_playoff: false }))
+      Array.from({ length: totalRounds }, (_, i) => ({
+        season_id: seasonId, name: `${i + 1}. kolo`, round_number: i + 1, is_playoff: false,
+      }))
     ).select()
 
-    if (newRounds && schedule.length > 0) {
-      const matchInserts = schedule.flatMap((pairs, i) =>
-        pairs.map(p => ({
-          season_id: seasonId,
-          round_id: newRounds[i].id,
-          home_team_id: p.home,
-          away_team_id: p.away,
-          status: 'scheduled',
-          is_playoff: false,
+    if (newRounds && newRounds.length > 0) {
+      // Create empty match slots per round (teams filled in later)
+      const matchInserts = newRounds.flatMap(round =>
+        Array.from({ length: matchesPerRound }, () => ({
+          season_id: seasonId, round_id: round.id,
+          home_team_id: null, away_team_id: null,
+          status: 'scheduled' as const, is_playoff: false,
         }))
       )
-      await supabase.from('matches').insert(matchInserts)
+      const { data: newMatchesData } = await supabase.from('matches').insert(matchInserts).select()
+      setCurrentRounds(newRounds.sort((a, b) => a.round_number - b.round_number))
+      setCurrentMatches((newMatchesData ?? []) as Match[])
+      setForm({ name: '', round_number: newRounds.length + 1 })
     }
 
     setLoading(false)
     router.refresh()
   }
 
+  const handleTeamChange = async (matchId: string, field: 'home' | 'away', teamId: string) => {
+    const m = currentMatches.find(x => x.id === matchId)
+    if (!m) return
+
+    const newHomeId = field === 'home' ? (teamId || null) : m.home_team_id
+    const newAwayId = field === 'away' ? (teamId || null) : m.away_team_id
+
+    // Optimistic update
+    setCurrentMatches(prev => prev.map(x => x.id === matchId
+      ? { ...x, home_team_id: newHomeId, away_team_id: newAwayId }
+      : x
+    ))
+
+    // Validate when both teams are selected
+    if (newHomeId && newAwayId) {
+      if (newHomeId === newAwayId) {
+        alert('Domaćin i gost ne mogu biti ista ekipa.')
+        setCurrentMatches(prev => prev.map(x => x.id === matchId
+          ? { ...x, home_team_id: m.home_team_id, away_team_id: m.away_team_id }
+          : x
+        ))
+        return
+      }
+
+      const pairCount = currentMatches.filter(x =>
+        x.id !== matchId && x.home_team_id && x.away_team_id && (
+          (x.home_team_id === newHomeId && x.away_team_id === newAwayId) ||
+          (x.home_team_id === newAwayId && x.away_team_id === newHomeId)
+        )
+      ).length
+      if (pairCount >= 2) {
+        alert('Ove dvije ekipe već igraju 2 puta ove sezone.')
+        setCurrentMatches(prev => prev.map(x => x.id === matchId
+          ? { ...x, home_team_id: m.home_team_id, away_team_id: m.away_team_id }
+          : x
+        ))
+        return
+      }
+    }
+
+    await supabase.from('matches').update({ home_team_id: newHomeId, away_team_id: newAwayId }).eq('id', matchId)
+  }
+
+  const saveMatchDate = async (matchId: string, date: string) => {
+    await supabase.from('matches').update({ match_date: date || null }).eq('id', matchId)
+  }
+
   const handleAddRound = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
-    await supabase.from('rounds').insert({ season_id: seasonId, name: form.name, round_number: form.round_number, is_playoff: false })
-    setForm(f => ({ name: '', round_number: f.round_number + 1 }))
+    const { data } = await supabase.from('rounds').insert({
+      season_id: seasonId, name: form.name, round_number: form.round_number, is_playoff: false,
+    }).select().single()
+    if (data) {
+      setCurrentRounds(prev => [...prev, data].sort((a, b) => a.round_number - b.round_number))
+      setForm({ name: '', round_number: currentRounds.length + 2 })
+    }
     setLoading(false)
     router.refresh()
   }
@@ -120,17 +158,15 @@ export default function RoundsManager({ rounds, seasons, defaultSeasonTeams, def
   const handleDeleteRound = async (id: string) => {
     if (!confirm('Obriši kolo? Sve utakmice u kolu biti će obrisane.')) return
     await supabase.from('rounds').delete().eq('id', id)
+    setCurrentRounds(prev => prev.filter(r => r.id !== id))
+    setCurrentMatches(prev => prev.filter(m => m.round_id !== id))
+    if (expanded === id) setExpanded(null)
     router.refresh()
   }
 
-  const saveMatchDate = async (matchId: string, date: string) => {
-    await supabase.from('matches').update({ match_date: date || null }).eq('id', matchId)
-  }
+  const roundMatches = (roundId: string) => currentMatches.filter(m => m.round_id === roundId)
 
-  const roundMatches = (roundId: string) =>
-    currentMatches.filter(m => m.round_id === roundId).sort((a, b) =>
-      (a.home_team?.name ?? '').localeCompare(b.home_team?.name ?? '')
-    )
+  const teamItems = currentTeams.map(st => ({ value: st.team_id, label: st.team?.name ?? '' }))
 
   return (
     <div className="space-y-6">
@@ -155,21 +191,29 @@ export default function RoundsManager({ rounds, seasons, defaultSeasonTeams, def
               {hasBye && <span className="text-amber-600"> (neparan broj ekipa — jedna slobodna po kolu)</span>}
               {' '}· svaka ekipa igra sa svakom točno <strong>2×</strong>
             </p>
-            <Button onClick={handleGenerate} disabled={loading} variant={seasonRounds.length > 0 ? 'outline' : 'default'}>
-              {loading ? 'Generira...' : seasonRounds.length > 0 ? '↺ Resetiraj raspored' : '⚡ Generiraj raspored'}
+            <p className="text-xs text-muted-foreground">
+              Kreira prazne slotove — ekipe popuni direktno u pregledu kola ispod.
+            </p>
+            <Button
+              onClick={handleGenerate}
+              disabled={loading}
+              variant={currentRounds.length > 0 ? 'outline' : 'default'}
+            >
+              {loading ? 'Generira...' : currentRounds.length > 0 ? '↺ Resetiraj raspored' : '⚡ Generiraj raspored'}
             </Button>
           </>
         )}
       </div>
 
-      {/* Round list with match date editors */}
-      {seasonRounds.length > 0 && (
+      {/* Round list with match team selectors */}
+      {currentRounds.length > 0 && (
         <div className="space-y-1.5">
           <p className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-2">
-            Kola ({seasonRounds.length})
+            Kola ({currentRounds.length})
           </p>
-          {seasonRounds.map(round => {
+          {currentRounds.map(round => {
             const rm = roundMatches(round.id)
+            const assigned = rm.filter(m => m.home_team_id && m.away_team_id).length
             const dated = rm.filter(m => m.match_date).length
             const isOpen = expanded === round.id
 
@@ -184,9 +228,12 @@ export default function RoundsManager({ rounds, seasons, defaultSeasonTeams, def
                     <span className="font-medium">{round.name}</span>
                     <Badge variant="secondary" className="text-xs">{rm.length} utakmic{rm.length === 1 ? 'a' : 'e'}</Badge>
                     {rm.length > 0 && (
-                      <span className={`text-xs ${dated === rm.length ? 'text-green-600' : 'text-muted-foreground'}`}>
-                        {dated}/{rm.length} datuma
+                      <span className={`text-xs font-medium ${assigned === rm.length ? 'text-green-600' : 'text-amber-600'}`}>
+                        {assigned}/{rm.length} popunjeno
                       </span>
+                    )}
+                    {dated > 0 && (
+                      <span className="text-xs text-muted-foreground">{dated}/{rm.length} dat.</span>
                     )}
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
@@ -202,33 +249,53 @@ export default function RoundsManager({ rounds, seasons, defaultSeasonTeams, def
                 </button>
 
                 {isOpen && (
-                  <div className="border-t bg-muted/20 px-4 py-3 space-y-2">
+                  <div className="border-t bg-muted/20 px-4 py-3 space-y-3">
                     {rm.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">Nema utakmica — dodaj ih u sekciji Utakmice.</p>
-                    ) : (
-                      rm.map(m => (
-                        <div key={m.id} className="flex items-center gap-3 flex-wrap">
-                          <span className="text-sm min-w-[220px]">
-                            <span className="font-medium">{m.home_team?.name}</span>
-                            <span className="text-muted-foreground mx-1">vs</span>
-                            <span className="font-medium">{m.away_team?.name}</span>
-                          </span>
-                          <div className="flex items-center gap-2">
-                            <Input
-                              type="datetime-local"
-                              className="h-7 text-xs w-44"
-                              defaultValue={m.match_date ? m.match_date.slice(0, 16) : ''}
-                              onBlur={e => saveMatchDate(m.id, e.target.value)}
-                            />
-                            {m.status === 'finished' && (
-                              <Badge variant="secondary" className="text-xs">
-                                {m.home_score}–{m.away_score}
-                              </Badge>
-                            )}
-                          </div>
-                        </div>
-                      ))
-                    )}
+                      <p className="text-sm text-muted-foreground">Nema utakmica u ovom kolu.</p>
+                    ) : rm.map(m => (
+                      <div key={m.id} className="flex items-center gap-2 flex-wrap">
+                        <Select
+                          value={m.home_team_id ?? ''}
+                          onValueChange={v => v && handleTeamChange(m.id, 'home', v)}
+                          items={teamItems}
+                        >
+                          <SelectTrigger className="h-7 text-xs w-36">
+                            <SelectValue placeholder="Domaćin" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {currentTeams.map(st => (
+                              <SelectItem key={st.team_id} value={st.team_id}>{st.team?.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <span className="text-muted-foreground text-xs shrink-0">vs</span>
+                        <Select
+                          value={m.away_team_id ?? ''}
+                          onValueChange={v => v && handleTeamChange(m.id, 'away', v)}
+                          items={teamItems}
+                        >
+                          <SelectTrigger className="h-7 text-xs w-36">
+                            <SelectValue placeholder="Gost" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {currentTeams.map(st => (
+                              <SelectItem key={st.team_id} value={st.team_id}>{st.team?.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Input
+                          type="datetime-local"
+                          className="h-7 text-xs w-44"
+                          defaultValue={m.match_date ? m.match_date.slice(0, 16) : ''}
+                          onBlur={e => saveMatchDate(m.id, e.target.value)}
+                        />
+                        {m.status === 'finished' && (
+                          <Badge variant="secondary" className="text-xs">
+                            {m.home_score}–{m.away_score}
+                          </Badge>
+                        )}
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
@@ -243,11 +310,22 @@ export default function RoundsManager({ rounds, seasons, defaultSeasonTeams, def
         <form onSubmit={handleAddRound} className="flex gap-3 items-end flex-wrap">
           <div className="space-y-1">
             <Label>Naziv kola</Label>
-            <Input placeholder="npr. 1. kolo" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} required className="w-40" />
+            <Input
+              placeholder="npr. 1. kolo"
+              value={form.name}
+              onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+              required
+              className="w-40"
+            />
           </div>
           <div className="space-y-1">
             <Label>Broj</Label>
-            <Input type="number" value={form.round_number} onChange={e => setForm(f => ({ ...f, round_number: +e.target.value }))} className="w-20" />
+            <Input
+              type="number"
+              value={form.round_number}
+              onChange={e => setForm(f => ({ ...f, round_number: +e.target.value }))}
+              className="w-20"
+            />
           </div>
           <Button type="submit" disabled={loading || !seasonId}>+ Dodaj kolo</Button>
         </form>
