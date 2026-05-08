@@ -7,6 +7,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { PlayerMatchStatsComputed } from '@/lib/supabase/types'
 import LiveMatchScore from '@/components/public/LiveMatchScore'
+import LiveMatchStats from '@/components/public/LiveMatchStats'
 
 export default async function MatchPage({ params }: { params: Promise<{ matchId: string }> }) {
   const { matchId } = await params
@@ -157,6 +158,16 @@ export default async function MatchPage({ params }: { params: Promise<{ matchId:
         </p>
         <LiveMatchScore initialMatch={match} />
       </div>
+
+      {match.status !== 'finished' && (
+        <LiveMatchStats
+          matchId={match.id}
+          homeTeamId={match.home_team_id}
+          awayTeamId={match.away_team_id}
+          homeTeamName={match.home_team?.name ?? 'Domaćin'}
+          awayTeamName={match.away_team?.name ?? 'Gost'}
+        />
+      )}
 
       {statsMatchScore ? (
         <div className="space-y-4">

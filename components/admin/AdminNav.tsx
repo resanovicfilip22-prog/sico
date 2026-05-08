@@ -14,6 +14,7 @@ const links = [
   { href: '/admin/rounds', label: 'Kola' },
   { href: '/admin/matches', label: 'Utakmice' },
   { href: '/admin/playoff', label: 'Playoff' },
+  { href: '/admin/help', label: 'Upute' },
 ]
 
 export default function AdminNav() {

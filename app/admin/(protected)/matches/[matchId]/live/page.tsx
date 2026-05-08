@@ -18,19 +18,28 @@ export default async function LiveMatchPage({ params }: { params: Promise<{ matc
 
   if (!match) notFound()
 
+  const [{ data: homeRoster }, { data: awayRoster }] = await Promise.all([
+    supabase.from('player_team_seasons').select('*, player:players(*)').eq('team_id', match.home_team_id).eq('season_id', match.season_id).order('jersey_number'),
+    supabase.from('player_team_seasons').select('*, player:players(*)').eq('team_id', match.away_team_id).eq('season_id', match.season_id).order('jersey_number'),
+  ])
+
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-4">
+    <div className="space-y-4 max-w-2xl mx-auto">
+      <div>
         <Link href="/admin/matches" className={cn(buttonVariants({ variant: 'ghost', size: 'sm' }))}>
           ← Utakmice
         </Link>
       </div>
-      <Card className="max-w-lg mx-auto">
+      <Card>
         <CardHeader>
           <CardTitle className="text-center text-lg">Live unos rezultata</CardTitle>
         </CardHeader>
         <CardContent>
-          <LiveScoreBoard initialMatch={match} />
+          <LiveScoreBoard
+            initialMatch={match}
+            homeRoster={homeRoster ?? []}
+            awayRoster={awayRoster ?? []}
+          />
         </CardContent>
       </Card>
     </div>

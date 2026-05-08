@@ -33,6 +33,10 @@ export default function MatchesManager({ matches, rounds, seasonTeams, seasons, 
   const handleAddMatch = async (e: React.FormEvent) => {
     e.preventDefault()
     if (form.home_team_id === form.away_team_id) return
+    if (pairCount >= 2) {
+      alert('Ove dvije ekipe već igraju 2 puta ove sezone. Nije moguće dodati treću utakmicu između istih ekipa.')
+      return
+    }
     setLoading(true)
     await supabase.from('matches').insert({
       season_id: seasonId,
@@ -67,6 +71,13 @@ export default function MatchesManager({ matches, rounds, seasonTeams, seasons, 
   }
 
   const regularRounds = rounds.filter(r => !r.is_playoff && r.season_id === seasonId)
+  const seasonMatches2 = matches.filter(m => m.season_id === seasonId && !m.is_playoff)
+  const pairCount = (form.home_team_id && form.away_team_id)
+    ? seasonMatches2.filter(m =>
+        (m.home_team_id === form.home_team_id && m.away_team_id === form.away_team_id) ||
+        (m.home_team_id === form.away_team_id && m.away_team_id === form.home_team_id)
+      ).length
+    : 0
   const seasonMatches = matches.filter(m => m.season_id === seasonId && !m.is_playoff)
 
   const teamsInSelectedRound = form.round_id
@@ -120,9 +131,16 @@ export default function MatchesManager({ matches, rounds, seasonTeams, seasons, 
           <Label>Datum</Label>
           <Input type="datetime-local" value={form.match_date} onChange={e => setForm(f => ({ ...f, match_date: e.target.value }))} />
         </div>
-        <Button type="submit" disabled={loading || !form.round_id || !form.home_team_id || !form.away_team_id}>
-          + Dodaj utakmicu
-        </Button>
+        <div className="space-y-1">
+          {form.home_team_id && form.away_team_id && pairCount > 0 && (
+            <p className={`text-xs ${pairCount >= 2 ? 'text-destructive font-medium' : 'text-amber-600'}`}>
+              {pairCount >= 2 ? '✕ Max 2 susreta — nije moguće dodati' : `⚠ Ove ekipe već igraju ${pairCount}× ove sezone`}
+            </p>
+          )}
+          <Button type="submit" disabled={loading || !form.round_id || !form.home_team_id || !form.away_team_id || pairCount >= 2}>
+            + Dodaj utakmicu
+          </Button>
+        </div>
       </form>
 
       <Table>
