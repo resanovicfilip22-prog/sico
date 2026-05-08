@@ -137,6 +137,22 @@ export default function RoundsManager({ rounds, seasons, defaultSeasonTeams, def
         return
       }
 
+      // Each team can appear at most once per round
+      const otherInRound = currentMatches.filter(x => x.id !== matchId && x.round_id === m.round_id)
+      const teamConflict = otherInRound.some(x =>
+        x.home_team_id === newHomeId || x.away_team_id === newHomeId ||
+        x.home_team_id === newAwayId || x.away_team_id === newAwayId
+      )
+      if (teamConflict) {
+        alert('Jedna od ekipa već ima utakmicu u ovom kolu.')
+        setCurrentMatches(prev => prev.map(x => x.id === matchId
+          ? { ...x, home_team_id: m.home_team_id, away_team_id: m.away_team_id }
+          : x
+        ))
+        return
+      }
+
+      // Same pair can play at most 2 times per season
       const pairCount = currentMatches.filter(x =>
         x.id !== matchId && x.home_team_id && x.away_team_id && (
           (x.home_team_id === newHomeId && x.away_team_id === newAwayId) ||
